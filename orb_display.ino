@@ -315,8 +315,13 @@ void setupServer() {
 
   // Safe HTTP POST Body Handler (No mid-stream Flash writes)[cite: 1]
   auto bodyHandler = [](AsyncWebServerRequest *req, uint8_t *data, size_t len, size_t index, size_t total) {
-    // Wait until the entire body chunk has arrived before processing[cite: 1]
-    if (index + len < total) return;
+    // Only process single-chunk JSON bodies; reject fragmented payloads
+    if (index != 0 || len != total) {
+      if (index + len >= total) {
+        req->send(400, "text/plain", "Payload too large or fragmented");
+      }
+      return;
+    }
 
     StaticJsonDocument<256> doc;
     DeserializationError err = deserializeJson(doc, data, len);
@@ -388,12 +393,12 @@ static String httpGet(const char* host, const char* path) {
   client.setInsecure(); // Skip TLS certificate verification for simplicity
   
   if (!client.connect(host, 443)) return String();
-  client.printf("GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: OrbDisplay/1.0\r\nConnection: close\r\n\r\n",
+  client.printf("GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: OrbDisplay/1.0\r\nConnection: close\r\n\r\n",
                 path, host);
   String response;
   uint32_t deadline = millis() + 6000;
   bool headerDone = false;
-  while (client.connected() && millis() < deadline) {
+  while ((client.connected() || client.available()) && millis() < deadline) {
     while (client.available()) {
       String line = client.readStringUntil('\n');
       if (!headerDone) {
