@@ -10,16 +10,16 @@ A production-ready firmware for an ESP32-C3 driving a 128×64 monochromatic OLED
 
 | Component | Notes |
 |-----------|-------|
-| **MCU** | ESP32-C3 (any dev board, e.g. Seeed XIAO ESP32-C3) |
-| **Display** | SH1106 128×64 OLED _or_ SSD1306 128×64 OLED (I²C) |
-| **Lens** | Any round watch-glass / porthole lens glued over the OLED |
-| **Power** | 3.3 V or 5 V USB |
+| **MCU** | ESP32-C3 Super Mini |
+| **Display** | SH1106 128×64 OLED (I²C) |
+| **Lens** | Camera Lens |
+| **Power** | 3.7V Li-Ion Battery |
 
 ### I²C Wiring (ESP32-C3 defaults)
 
 ```
-OLED SDA  →  GPIO 8
-OLED SCL  →  GPIO 9
+OLED SDA  →  GPIO 1
+OLED SCL  →  GPIO 3
 OLED VCC  →  3.3 V
 OLED GND  →  GND
 ```
