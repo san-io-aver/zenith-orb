@@ -6,7 +6,8 @@ A production-ready firmware for an ESP32-C3 driving a 128×64 monochromatic OLED
 
 ---
 ## Web App Demo
-![Demo](assets/web.gif)
+<img src="assets/web.gif" alt="Demo" height="500">
+
 ## Hardware
 
 | Component | Notes |
