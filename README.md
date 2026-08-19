@@ -5,12 +5,13 @@
 A production-ready firmware for an ESP32-C3 driving a 128×64 monochromatic OLED through a non-centred round lens viewport. Three rendering modes + a futuristic dark-mode web dashboard served directly from the chip.
 
 ---
-
+## Web App Demo
+![Demo](assets/web.gif)
 ## Hardware
 
 | Component | Notes |
 |-----------|-------|
-| **MCU** | ESP32-C3 Super Mini |
+| **MCU** | Seeed Studio Xiao ESP32-C3   |
 | **Display** | SH1106 128×64 OLED (I²C) |
 | **Lens** | Camera Lens |
 | **Power** | 3.7V Li-Ion Battery |
@@ -18,10 +19,11 @@ A production-ready firmware for an ESP32-C3 driving a 128×64 monochromatic OLED
 ### I²C Wiring (ESP32-C3 defaults)
 
 ```
-OLED SDA  →  GPIO 1
-OLED SCL  →  GPIO 3
-OLED VCC  →  3.3 V
-OLED GND  →  GND
+OLED SDA       →  GPIO 20
+OLED SCL       →  GPIO 10
+Touch Sensor   →  D1 / GPIO 3  (Double-tap to shake 8-Ball)
+OLED VCC       →  3.3 V
+OLED GND       →  GND
 ```
 
 Change `SDA_PIN` / `SCL_PIN` in `orb_display.ino` if your board differs.
@@ -50,6 +52,7 @@ Install all via **Arduino IDE → Sketch → Include Library → Manage Librarie
 ```
 orb-display/
 ├── orb_display.ino   ← main sketch (include this in Arduino IDE)
+├── magic_8_ball.h    ← 8-Ball animation engine, wrapper & physics
 ├── web_ui.h          ← embedded HTML/CSS/JS dashboard (PROGMEM)
 └── README.md         ← this file
 ```
@@ -80,7 +83,7 @@ The dashboard is served on port 80 and auto-polls every 5 seconds.
 
 | Tab | Purpose |
 |-----|---------|
-| **MODE SELECT** | Switch between Solar Orrery, Satellite Radar, Custom HUD |
+| **MODE SELECT** | Switch between Solar Orrery, Satellite Radar, Custom HUD, Magic 8 Ball |
 | **CALIBRATION** | Drag sliders for Center X/Y and Radius; live preview updates the canvas |
 | **SOLAR SYSTEM** | Speed warp slider + preset buttons (1×…10K×) |
 | **RADAR** | Select ISS / Hubble / Tiangong; trigger TLE refresh |
@@ -152,18 +155,35 @@ Settings are stored in ESP32 NVS via `Preferences.h` and survive reboots.
 - Animated rotating 4-triangle sci-fi accent ring
 - Three nested rings (solid, dashed, solid) for depth
 
+### Mode 3 — Magic 8 Ball
+
+- 20 Classic Responses: Standard Magic 8-Ball answers (positive, non-committal, negative).
+- Procedural Physics & Animation:
+    - Damped spring physicsrumble and camera shake during re-rolls.
+    - Rising fluid bubbles that respect the circular viewport clipping boundary.
+    - Smooth buoyancy float animation ($\pm1.5\text{px}$) with 3D bevelled triangular die.
+Smart Text Layout: Automatic multi-line string wrapper paired with a 5×7 font to fit long answers inside the triangular die face.
+
+- Interactive Triggers:
+
+    - Click or tap the Magic 8-Ball card on the web UI to re-roll anytime.
+
+    - Double-tap the Touch Sensor (D1) to hardware-trigger a shake and answer re-roll.
+
 ---
 
 ## Code Architecture
 
 ```
 loop()
+├── checkTouchSensor() (Non-blocking double-tap polling)
 ├── NTP retry (30 s interval)
 ├── TLE fetch (1 h interval, ~1-2 s blocking)
 └── renderFrame() (33 ms = ~30 FPS)
     ├── drawSolarSystem()
     ├── drawRadar()
-    └── drawCustomText()
+    ├── drawCustomText()
+    └── drawMagic8Ball()
 ```
 
 **Zero `delay()` calls** in the main render path. The TLE fetch (`WiFiClient`) is the only blocking call and runs at most once per hour for ~1–2 s total.

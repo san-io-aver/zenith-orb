@@ -30,14 +30,17 @@
 #include <time.h>
 #include <math.h>
 #include <WiFiClientSecure.h>
+
+#include "magic8.h"
 // ─── User Configuration ────────────────────────────────────
-#define WIFI_SSID      "YOUR_SSID"
-#define WIFI_PASSWORD  "YOUR_PASSWORD"
+#define WIFI_SSID      "##########"
+#define WIFI_PASSWORD  "######"
 #define HOSTNAME       "orb"          // mDNS: orb.local
 
 // ─── I²C Pins (ESP32-C3 defaults; adjust if needed) ────────
-#define SDA_PIN  1
-#define SCL_PIN  3
+#define SDA_PIN  20
+#define SCL_PIN  10
+#define TOUCH_PIN D1               // GPIO3 on XIAO ESP32-C3
 
 // ─── Display Driver ────────────────────────────────────────
 // Comment/uncomment to match your hardware:
@@ -61,7 +64,7 @@ int16_t  g_cy     = 32;   // center_y  (0-64)
 int16_t  g_radius = 28;   // viewport radius (10-64)
 
 // ─── Operating mode ────────────────────────────────────────
-enum class Mode : uint8_t { SOLAR = 0, RADAR = 1, TEXT = 2 };
+enum class Mode : uint8_t { SOLAR = 0, RADAR = 1, TEXT = 2, MAGIC8 = 3 };
 volatile Mode g_mode = Mode::SOLAR;
 
 // ─── Speed warp (solar system) ─────────────────────────────
@@ -124,6 +127,56 @@ void animateLock(uint32_t tick, const int16_t px[], const int16_t py[], const fl
 
 
 static bool g_orbParsed[3] = {false, false, false};
+
+constexpr uint32_t DEBOUNCE_MS     = 50;  // Minimum stable signal duration
+constexpr uint32_t DOUBLE_TAP_GAP  = 400; // Max time allowed between taps (ms)
+
+// ─── Non-Blocking Double-Touch Handler ──────────────────────
+void checkTouchSensor() {
+  static bool lastReading = LOW;
+  static bool debouncedState = LOW;
+  static uint32_t lastDebounceTime = 0;
+  static uint32_t lastTapTime = 0;
+  static uint8_t tapCount = 0;
+
+  bool currentReading = digitalRead(TOUCH_PIN);
+
+  // 1. Debounce Check
+  if (currentReading != lastReading) {
+    lastDebounceTime = millis();
+  }
+
+  if ((millis() - lastDebounceTime) > DEBOUNCE_MS) {
+    // State has stabilized
+    if (currentReading != debouncedState) {
+      debouncedState = currentReading;
+
+      // 2. Rising Edge Detected (Touch Active)
+      if (debouncedState == HIGH) {
+        uint32_t now = millis();
+
+        if (now - lastTapTime <= DOUBLE_TAP_GAP) {
+          tapCount++;
+        } else {
+          tapCount = 1; // First tap or window expired
+        }
+        lastTapTime = now;
+
+        // 3. Double Touch Confirmed
+        if (tapCount >= 2) {
+          tapCount = 0; // Reset counter
+          
+          // Change mode and trigger fresh re-roll
+          g_mode = Mode::MAGIC8;
+          triggerMagic8Ball();
+          prefs.putUChar("mode", (uint8_t)g_mode); // Save state
+        }
+      }
+    }
+  }
+
+  lastReading = currentReading;
+}
 // ═══════════════════════════════════════════════════════════
 //  SETUP
 // ═══════════════════════════════════════════════════════════
@@ -131,8 +184,13 @@ void setup() {
   Serial.begin(115200);
   delay(150);
   Serial.println(F("\n\n=== ORB DISPLAY BOOT ==="));
-
+  pinMode(SDA_PIN, INPUT_PULLUP);
+  pinMode(SCL_PIN, INPUT_PULLUP);
+  pinMode(TOUCH_PIN, INPUT);
+  delay(10);
   Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(100000);   // Drops speed to 100kHz so bad traces don't drop frames
+  Wire.setTimeOut(100);
   u8g2.begin();
   u8g2.setContrast(200);
   u8g2.clearBuffer();
@@ -163,6 +221,7 @@ void tleFetchTask(void *pvParameters) {
 //  LOOP  (fully non-blocking millis() state machine)
 // ═══════════════════════════════════════════════════════════
 void loop() {
+  checkTouchSensor();
   uint32_t now = millis();
 
   // NTP retry
@@ -240,6 +299,9 @@ void savePreferences() {
 //  WIFI
 // ═══════════════════════════════════════════════════════════
 void setupWiFi() {
+  WiFi.persistent(false);    // Prevents unnecessary NVS flash writes
+  WiFi.disconnect(true);     // Wipes cached credentials/state
+  delay(100);
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(HOSTNAME);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -248,10 +310,16 @@ void setupWiFi() {
   while (WiFi.status() != WL_CONNECTED && attempts < 30) {
     delay(500); Serial.print('.'); attempts++;
   }
-  if (WiFi.status() == WL_CONNECTED)
-    Serial.printf("\nWiFi OK  IP: %s\n", WiFi.localIP().toString().c_str());
-  else
-    Serial.println(F("\nWiFi FAILED — running offline"));
+  // Replace your existing "WiFi FAILED" block with this:
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi FAILED – Starting SoftAP...");
+    
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP("OrbDisplay-Setup", "12345678"); // Network Name & Password
+    
+    Serial.print("Access Point Started! IP: ");
+    Serial.println(WiFi.softAPIP()); // Prints 192.168.4.1
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -312,7 +380,11 @@ void setupServer() {
     serializeJson(doc, out);
     req->send(200, "application/json", out);
   });
-
+  server.on("/shake", HTTP_POST, [](AsyncWebServerRequest *req) {
+    g_mode = Mode::MAGIC8;
+    triggerMagic8Ball();
+    req->send(200, "text/plain", "8-Ball Shaken");
+  });
   // Safe HTTP POST Body Handler (No mid-stream Flash writes)[cite: 1]
   auto bodyHandler = [](AsyncWebServerRequest *req, uint8_t *data, size_t len, size_t index, size_t total) {
     // Only process single-chunk JSON bodies; reject fragmented payloads
@@ -338,10 +410,17 @@ void setupServer() {
       // NOTE: savePreferences() removed to protect Flash lifespan during live slider drags
     } else if (url == "/mode") {
       if (doc["mode"].is<int>()) {
-        int m = doc["mode"];
-        g_mode = (Mode)constrain(m, 0, 2);
+        Mode newMode = (Mode)constrain((int)doc["mode"], 0, 3);
+
+        // If switching into 8-Ball mode, re-roll the answer and reset the timer
+        if (newMode == Mode::MAGIC8) {
+          triggerMagic8Ball();
+        }
+
+        g_mode = newMode;
+        prefs.putUChar("mode", (uint8_t)g_mode); // Save state
       }
-    } else if (url == "/speed") {
+    }else if (url == "/speed") {
       if (doc["speed"].is<float>()) {
         float s = doc["speed"];
         g_speed = constrain(s, 1.0f, 50000.0f);
@@ -703,9 +782,10 @@ static uint32_t g_frameTick = 0;
 void renderFrame() {
   u8g2.clearBuffer();
   switch (g_mode) {
-    case Mode::SOLAR: drawSolarSystem(); break;
-    case Mode::RADAR: drawRadar();       break;
-    case Mode::TEXT:  drawCustomText();  break;
+    case Mode::SOLAR:  drawSolarSystem(); break;
+    case Mode::RADAR:  drawRadar();       break;
+    case Mode::TEXT:   drawCustomText();  break;
+    case Mode::MAGIC8: drawMagic8Ball(u8g2, g_cx, g_cy, g_radius, drawClippedLine); break;
   }
   u8g2.sendBuffer();
   g_frameTick++;

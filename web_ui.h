@@ -637,7 +637,15 @@ static const char WEB_UI_HTML[] PROGMEM = R"rawhtml(
           <div class="mode-name">CUSTOM HUD</div>
           <div class="mode-desc">Scrolling vector text inside the lens viewport</div>
         </label>
+        <label id="mode-card-3" class="mode-card" for="mode-radio-3" onclick="setMode(3)">
+          <input type="radio" name="mode" id="mode-radio-3" value="3">
+          <span class="mode-icon">🎱</span>
+          <div class="mode-name">MAGIC 8 BALL</div>
+          <div class="mode-desc">Ask a question and shake for guidance</div>
+        
+        </label>
       </div>
+      
     </div>
 
   </section>
@@ -885,6 +893,13 @@ static const char WEB_UI_HTML[] PROGMEM = R"rawhtml(
 'use strict';
 
 /* ─── Utilities ─────────────────────────────────────── */
+function setMode(modeValue) {
+  fetch('/mode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: modeValue })
+  });
+}
 function toast(msg, type = 'ok') {
   const c = document.getElementById('toast-container');
   const t = document.createElement('div');
@@ -909,7 +924,7 @@ async function api(path, body) {
 }
 
 /* ─── Status polling ────────────────────────────────── */
-const MODE_NAMES = ['SOLAR ORRERY', 'SATELLITE RADAR', 'CUSTOM HUD'];
+const MODE_NAMES = ['SOLAR ORRERY', 'SATELLITE RADAR', 'CUSTOM HUD', 'MAGIC 8 BALL'];
 const RADAR_NAMES = ['ISS', 'Hubble', 'Tiangong'];
 
 async function loadStatus() {
@@ -922,6 +937,16 @@ async function loadStatus() {
     document.getElementById('hdr-ip').textContent = 'Device offline';
     return;
   }
+async function shake8Ball() {
+  try {
+    await fetch('/shake', { method: 'POST' });
+    if (typeof toast === 'function') {
+      toast('🎱 Magic 8 Ball shaken!', 'ok');
+    }
+  } catch (err) {
+    console.error('Failed to shake:', err);
+  }
+}
 
   /* Header chips */
   document.getElementById('hdr-ip').textContent = `http://${d.ip || 'orb.local'}`;
@@ -1051,9 +1076,7 @@ async function saveCalibration() {
   const cy = parseInt(document.getElementById('sl-cy').value);
   const r  = parseInt(document.getElementById('sl-r').value);
   try {
-    // Send live parameters first, then explicitly commit to Flash[cite: 1, 2]
     await api('/calibrate', { cx, cy, radius: r });
-    await api('/save');
     toast('✓ Calibration saved to EEPROM', 'ok');
   } catch(e) {}
 }
